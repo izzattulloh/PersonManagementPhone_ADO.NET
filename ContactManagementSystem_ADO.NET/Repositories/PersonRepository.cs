@@ -67,9 +67,16 @@ public class PersonRepository : IPersonRepository
         using var connection = new SqlConnection(_connectionString);
         connection.Open();
 
+        string deletePhonesSql = @"
+            DELETE FROM Phone WHERE PersonId = @Id
+        ";
+        using var cmdDeletePhones = new SqlCommand(deletePhonesSql, connection);
+        cmdDeletePhones.Parameters.AddWithValue("@Id", id);
+        cmdDeletePhones.ExecuteNonQuery();
+        
         string deletePersonSql = @"
             DELETE FROM Person
-        WHERE Id = @Id
+            WHERE Id = @Id
         ";
         
         using var cmd = new SqlCommand(deletePersonSql, connection);
