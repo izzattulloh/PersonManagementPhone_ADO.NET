@@ -1,5 +1,6 @@
 using ContactManagementSystem_ADO.NET.Models;
 using Microsoft.Data.SqlClient;
+using Dapper;
 
 namespace ContactManagementSystem_ADO.NET.Repositories;
 
@@ -22,11 +23,7 @@ public class PersonRepository : IPersonRepository
             OUTPUT INSERTED.Id
             VALUES(@FullName)
         ";
-        
-        using var cmd =  new SqlCommand(insertPersonSql, connection);
-        cmd.Parameters.AddWithValue("@FullName", person.FullName);
-
-        int newId = (int)cmd.ExecuteScalar();
+        int newId = connection.ExecuteScalar<int>(insertPersonSql, new { FullName = person.FullName });
         person.Id = newId;
 
         string insertPhoneSql = @"
@@ -36,18 +33,13 @@ public class PersonRepository : IPersonRepository
 
         foreach (var phone in phones)
         {
-            using var cmd2 = new SqlCommand(insertPhoneSql, connection);
-            cmd2.Parameters.AddWithValue("@PhoneNumber", phone);
-            cmd2.Parameters.AddWithValue("@PersonId", person.Id);
-            
-            cmd2.ExecuteNonQuery();
+            connection.Execute(insertPhoneSql, new { PhoneNumber = phone, PersonId = person.Id });
         }
     }
 
     public void Update(Person person)
     {
         using var connection = new SqlConnection(_connectionString);
-        connection.Open();
 
         string updatePersonSql = @"
             UPDATE Person
@@ -55,40 +47,29 @@ public class PersonRepository : IPersonRepository
             WHERE Id = @Id
         ";
         
-        using var cmd = new SqlCommand(updatePersonSql, connection);
-        cmd.Parameters.AddWithValue("@FullName", person.FullName);
-        cmd.Parameters.AddWithValue("@Id", person.Id);
-        
-        cmd.ExecuteNonQuery();
+        connection.Execute(updatePersonSql, new { person.FullName, person.Id });
     }
 
     public void Delete(int id)
     {
         using var connection = new SqlConnection(_connectionString);
-        connection.Open();
 
         string deletePhonesSql = @"
             DELETE FROM Phone WHERE PersonId = @Id
         ";
-        using var cmdDeletePhones = new SqlCommand(deletePhonesSql, connection);
-        cmdDeletePhones.Parameters.AddWithValue("@Id", id);
-        cmdDeletePhones.ExecuteNonQuery();
+        connection.Execute(deletePhonesSql, new { Id = id });
         
         string deletePersonSql = @"
             DELETE FROM Person
             WHERE Id = @Id
         ";
         
-        using var cmd = new SqlCommand(deletePersonSql, connection);
-        cmd.Parameters.AddWithValue("@Id", id);
-        
-        cmd.ExecuteNonQuery();
+        connection.Execute(deletePersonSql, new { Id = id });
     }
 
     public Person? GetById(int id)
     {
         using var connection = new SqlConnection(_connectionString);
-        connection.Open();
 
         string sql = @"
         SELECT Id, FullName
@@ -96,28 +77,15 @@ public class PersonRepository : IPersonRepository
         WHERE Id = @Id;
     ";
 
-        using var cmd = new SqlCommand(sql, connection);
-        cmd.Parameters.AddWithValue("@Id", id);
-
-        using var reader = cmd.ExecuteReader();
-
-        if (!reader.Read())
-            return null;
-
-        return new Person
-        {
-            Id = reader.GetInt32(0),
-            FullName = reader.GetString(1)
-        };
+        return connection.QuerySingleOrDefault<Person>(sql, new { Id = id });
     }
 
 
     public List<Person> GetAll()
     {
-        var people = new Dictionary<int, Person>();
-
         using var connection = new SqlConnection(_connectionString);
-        connection.Open();
+
+        var people = new Dictionary<int, Person>();
 
         string sql = @"
         SELECT
@@ -130,35 +98,28 @@ public class PersonRepository : IPersonRepository
         ORDER BY p.Id;
     ";
 
-        using var cmd = new SqlCommand(sql, connection);
-        using var reader = cmd.ExecuteReader();
-
-        while (reader.Read())
-        {
-            int personId = reader.GetInt32(0);
-            string fullName = reader.GetString(1);
-
-            if (!people.TryGetValue(personId, out var person))
+        connection.Query<Person, Phone, Person>(
+            sql,
+            (person, phone) =>
             {
-                person = new Person
+                if (!people.TryGetValue(person.Id, out var existingPerson))
                 {
-                    Id = personId,
-                    FullName = fullName
-                };
-                people.Add(personId, person);
-            }
+                    existingPerson = person;
+                    existingPerson.Phones = new List<Phone>();
+                    people.Add(existingPerson.Id, existingPerson);
+                }
 
-            if (!reader.IsDBNull(2))
-            {
-                var phone = new Phone
+                if (phone != null)
                 {
-                    Id = reader.GetInt32(2),
-                    PhoneNumber = reader.GetString(3)
-                };
-                person.Phones.Add(phone);
-            }
-        }
+                    existingPerson.Phones.Add(phone);
+                }
+
+                return existingPerson;
+            },
+            splitOn: "Id"
+        );
 
         return people.Values.ToList();
     }
+
 }
